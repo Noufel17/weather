@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ var emojis = map[string]emoji.Emoji{
 	"Patchy rain":emoji.CloudWithRain,
 	"Partly cloudy":emoji.SunBehindCloud,
 	"Cloudy":emoji.Cloud,
+	"Patchy rain nearby":emoji.CloudWithRain,
 	"Rainy":emoji.CloudWithRain,
 }
 
@@ -57,6 +59,7 @@ func IsSimpleCondition(category string) bool {
         "Partly cloudy",
         "Cloudy",
         "Rainy",
+		"Patchy rain nearby",
 		"Clear":
         return true
     }
@@ -64,7 +67,11 @@ func IsSimpleCondition(category string) bool {
 }
 
 func main() {
- res, err := http.Get("https://api.weatherapi.com/v1/forecast.json?key=94474d04349f43008d395834240102&q=Algiers&days=1&aqi=no&alerts=no")
+ city := "Algiers"
+ if len(os.Args) >=2 {
+	city = os.Args[1]
+ }
+ res, err := http.Get("https://api.weatherapi.com/v1/forecast.json?key=94474d04349f43008d395834240102&q="+city+"&days=1&aqi=no&alerts=no")
 
  if err != nil {
   panic(err)
@@ -73,7 +80,7 @@ func main() {
  defer res.Body.Close()
 
  if res.StatusCode != 200 {
-  panic("Weather API not working")
+  panic("Sorry, couldn't get weather for"+city)
  }
 
  body, err := io.ReadAll(res.Body)
