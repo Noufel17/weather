@@ -7,14 +7,9 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"strings"
 	"time"
-
-	"github.com/enescakir/emoji"
-	"github.com/fatih/color"
 )
 
-// Weather struct to hold the API response data
 type Weather struct {
 	Location struct {
 		Name    string `json:"name"`
@@ -42,64 +37,30 @@ type Weather struct {
 	} `json:"forecast"`
 }
 
-// WeatherService encapsulates the weather API logic
 type WeatherService struct {
 	APIKey string
-	Client *http.Client // Now a public field to allow for mocking
+	Client *http.Client
 }
 
-// Map of weather conditions to emojis
-var emojis = map[string]emoji.Emoji{
-	"Clear":              emoji.Sun,
-	"Sunny":              emoji.Sun,
-	"Patchy rain":        emoji.CloudWithRain,
-	"Partly cloudy":      emoji.SunBehindCloud,
-	"Cloudy":             emoji.Cloud,
-	"Patchy rain nearby": emoji.CloudWithRain,
-	"Rainy":              emoji.CloudWithRain,
-}
-
-// NewWeatherService creates a new weather service instance with a custom HTTP client.
-// This allows us to use a mock client for testing.
+// NewWeatherService creates a new WeatherService instance
 func NewWeatherService(apiKey string, client *http.Client) *WeatherService {
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
 	return &WeatherService{
 		APIKey: apiKey,
 		Client: client,
 	}
 }
 
-// IsSimpleCondition checks if weather condition is in our emoji map
-func IsSimpleCondition(category string) bool {
-	switch category {
-	case "Sunny", "Patchy rain", "Partly cloudy", "Cloudy", "Rainy", "Patchy rain nearby", "Clear":
-		return true
-	}
-	return false
-}
-
-// GetWeatherEmoji returns appropriate emoji for weather condition
-func GetWeatherEmoji(condition string) emoji.Emoji {
-	condition = strings.TrimSpace(condition)
-	if IsSimpleCondition(condition) {
-		return emojis[condition]
-	}
-	return emoji.Cloud
-}
-
-// FetchWeatherData fetches weather data from API
+// FetchWeatherData fetches weather data from the API
 func (ws *WeatherService) FetchWeatherData(city string) (*Weather, error) {
-	url := fmt.Sprintf("https://api.weatherapi.com/v1/forecast.json?key=%s&q=%s&days=1&aqi=no&alerts=no", ws.APIKey, city)
+	apiUrl := fmt.Sprintf("https://api.weatherapi.com/v1/forecast.json?key=%s&q=%s&days=1", ws.APIKey, city)
 
-	resp, err := ws.Client.Get(url)
+	resp, err := ws.Client.Get(apiUrl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch weather data: %w", err)
+		return nil, fmt.Errorf("failed to fetch data: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status %d for city %s", resp.StatusCode, city)
 	}
 
@@ -116,48 +77,34 @@ func (ws *WeatherService) FetchWeatherData(city string) (*Weather, error) {
 	return &weather, nil
 }
 
-// FormatCurrentWeather formats current weather information
+// FormatCurrentWeather formats the current weather for printing
 func FormatCurrentWeather(weather *Weather) string {
-	location := weather.Location
-	current := weather.Current
-	condition := strings.TrimSpace(current.Condition.Text)
-	emoji := GetWeatherEmoji(condition)
-
-	return fmt.Sprintf("%s, %s: %.0f°C, %s %s",
-		location.Name,
-		location.Country,
-		current.TempC,
-		condition,
-		emoji,
-	)
+	location := fmt.Sprintf("%s, %s", weather.Location.Name, weather.Location.Country)
+	temp := fmt.Sprintf("%.1f°C", weather.Current.TempC)
+	condition := weather.Current.Condition.Text
+	return fmt.Sprintf("%s: %s, %s", location, temp, condition)
 }
 
-// FormatHourlyForecast formats hourly forecast with colors for rain
+// FormatHourlyForecast formats the hourly forecast data
 func FormatHourlyForecast(weather *Weather) []string {
+	var forecasts []string
+
 	if len(weather.Forecast.Forecastday) == 0 {
-		return []string{}
+		return forecasts
 	}
 
 	hours := weather.Forecast.Forecastday[0].Hour
-	var forecasts []string
-	currentTime := time.Now()
-
 	for _, hour := range hours {
 		date := time.Unix(hour.TimeEpoch, 0)
-		// Skip hours that are before the current hour
-		if date.Before(currentTime) {
-			continue
-		}
+		temp := fmt.Sprintf("%.1f°C", hour.TempC)
+		condition := hour.Condition.Text
+		rainChance := fmt.Sprintf("%.0f%%", hour.ChanceOfRain)
 
-		condition := strings.TrimSpace(hour.Condition.Text)
-		emoji := GetWeatherEmoji(condition)
-
-		forecast := fmt.Sprintf("%s - %.0f°C, %.0f%%, %s %s",
+		forecast := fmt.Sprintf("%s - %s, %s - %s",
 			date.Local().Format("15:04"),
-			hour.TempC,
-			hour.ChanceOfRain,
+			temp,
+			rainChance,
 			condition,
-			emoji,
 		)
 
 		forecasts = append(forecasts, forecast)
@@ -166,8 +113,8 @@ func FormatHourlyForecast(weather *Weather) []string {
 	return forecasts
 }
 
-// PrintForecast prints the forecast to a given writer, with colors
-func PrintForecast(w io.Writer, forecasts []string, weather *Weather) {
+// PrintForecast prints the forecast
+func PrintForecast(forecasts []string, weather *Weather) {
 	if len(weather.Forecast.Forecastday) == 0 {
 		return
 	}
@@ -183,11 +130,7 @@ func PrintForecast(w io.Writer, forecasts []string, weather *Weather) {
 		}
 
 		if hourIndex < len(forecasts) {
-			if hour.ChanceOfRain >= 50 {
-				color.New(color.FgRed).Fprintln(w, forecasts[hourIndex])
-			} else {
-				fmt.Fprintln(w, forecasts[hourIndex])
-			}
+			fmt.Println(forecasts[hourIndex])
 			hourIndex++
 		}
 	}
@@ -207,23 +150,19 @@ func main() {
 	// Use environment variable for API key, fallback to hardcoded for demo
 	apiKey := os.Getenv("WEATHER_API_KEY")
 	if apiKey == "" {
-		apiKey = "94474d04349f43008d395834240102"
+		apiKey = "YOUR_API_KEY_HERE"
 	}
 
-	// Pass a nil client, which will be initialized to the default http.Client
-	ws := NewWeatherService(apiKey, nil)
+	weatherService := NewWeatherService(apiKey, &http.Client{Timeout: 10 * time.Second})
 
-	weather, err := ws.FetchWeatherData(city)
+	weather, err := weatherService.FetchWeatherData(city)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Print current weather
 	fmt.Println(FormatCurrentWeather(weather))
-	fmt.Println()
 
-	// Print hourly forecast
 	forecasts := FormatHourlyForecast(weather)
-	PrintForecast(os.Stdout, forecasts, weather)
+	PrintForecast(forecasts, weather)
 }

@@ -1,15 +1,14 @@
+// main_test.go - Unit tests for the weather app
 package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/enescakir/emoji"
 )
 
 // mockRoundTripper allows us to mock the HTTP client's behavior
@@ -37,50 +36,6 @@ func TestNewWeatherService(t *testing.T) {
 	}
 	if service.Client != client {
 		t.Errorf("Expected Client to be the one provided")
-	}
-}
-
-// TestIsSimpleCondition uses a table-driven approach to test various conditions
-func TestIsSimpleCondition(t *testing.T) {
-	testCases := []struct {
-		condition string
-		expected  bool
-	}{
-		{"Sunny", true},
-		{"Cloudy", true},
-		{"Patchy rain", true},
-		{"Non-simple condition", false},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.condition, func(t *testing.T) {
-			result := IsSimpleCondition(tc.condition)
-			if result != tc.expected {
-				t.Errorf("For condition %q, expected %v, but got %v", tc.condition, tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestGetWeatherEmoji tests the emoji mapping
-func TestGetWeatherEmoji(t *testing.T) {
-	testCases := []struct {
-		condition string
-		expected  emoji.Emoji
-	}{
-		{"Sunny", emoji.Sun},
-		{"Cloudy", emoji.Cloud},
-		{"Non-simple condition", emoji.Cloud},
-		{"", emoji.Cloud},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.condition, func(t *testing.T) {
-			result := GetWeatherEmoji(tc.condition)
-			if result != tc.expected {
-				t.Errorf("For condition %q, expected %v, but got %v", tc.condition, tc.expected, result)
-			}
-		})
 	}
 }
 
@@ -176,7 +131,7 @@ func TestFormatCurrentWeather(t *testing.T) {
 			Icon string `json:"icon"`
 		}{Text: "Partly cloudy"}},
 	}
-	expected := fmt.Sprintf("Casablanca, Morocco: 22°C, Partly cloudy %v", emoji.SunBehindCloud)
+	expected := "Casablanca, Morocco: 22.0°C, Partly cloudy"
 	result := FormatCurrentWeather(weather)
 	if result != expected {
 		t.Errorf("Expected %q, got %q", expected, result)
@@ -236,13 +191,13 @@ func TestFormatHourlyForecast(t *testing.T) {
 	}
 
 	result := FormatHourlyForecast(weather)
-	if len(result) != 1 {
-		t.Fatalf("Expected 1 forecast, got %d", len(result))
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 forecasts, got %d", len(result))
 	}
 
 	expectedPrefix := now.Add(1 * time.Hour).Local().Format("15:04")
-	if !strings.HasPrefix(result[0], expectedPrefix) {
-		t.Errorf("Expected forecast to start with %q, but got %q", expectedPrefix, result[0])
+	if !strings.HasPrefix(result[1], expectedPrefix) {
+		t.Errorf("Expected forecast to start with %q, but got %q", expectedPrefix, result[1])
 	}
 }
 
@@ -270,12 +225,14 @@ func TestGetCityFromArgs(t *testing.T) {
 
 // TestPrintForecast captures stdout to test the output
 func TestPrintForecast(t *testing.T) {
-	// Create a buffer to capture the output
-	var buf bytes.Buffer
+	// Capture stdout
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
 
 	forecasts := []string{
-		"10:00 - 15°C, 10% - Sunny",
-		"11:00 - 16°C, 60% - Rainy",
+		"10:00 - 15.0°C, 10% - Sunny",
+		"11:00 - 16.0°C, 60% - Rainy",
 	}
 
 	weather := &Weather{
@@ -326,19 +283,18 @@ func TestPrintForecast(t *testing.T) {
 			},
 		},
 	}
-	// Pass the buffer to the function to capture its output
-	PrintForecast(&buf, forecasts, weather)
+	PrintForecast(forecasts, weather)
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
 	output := buf.String()
 
-	// The first line should not have color codes.
-	if !strings.Contains(output, "10:00 - 15°C, 10% - Sunny\n") {
-		t.Errorf("Expected output to contain '10:00 - 15°C, 10%% - Sunny\\n', but got %q", output)
-	}
-
-	// The second line with rain should have color codes.
-	// We'll check for the full string including the ANSI escape codes.
-	expectedColoredString := "\x1b[31m11:00 - 16°C, 60% - Rainy\x1b[0m\n"
-	if !strings.Contains(output, expectedColoredString) {
-		t.Errorf("Expected output to contain %q, but got %q", expectedColoredString, output)
+	// Since coloring and emojis are completely removed, we only check for the plain strings.
+	// The PrintForecast function skips the first hour if it's in the past.
+	expectedOutput := "10:00 - 15.0°C, 10% - Sunny\n11:00 - 16.0°C, 60% - Rainy\n"
+	if output != expectedOutput {
+		t.Errorf("Expected output to be %q, but got %q", expectedOutput, output)
 	}
 }
