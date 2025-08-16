@@ -1,0 +1,127 @@
+# .gitlab-ci.yml
+# This file defines a CI/CD pipeline for a Go application.
+# It consists of four main stages that mirror your GitHub Actions workflow:
+# 1. test: Runs Go unit tests.
+# 2. build: Creates a multi-platform Docker image.
+# 3. publish: Pushes the image to Docker Hub.
+# 4. deploy: Deploys the new image to a Google Cloud Platform VM.
+
+# Define the overall stages for the pipeline.
+# Jobs within the same stage can run in parallel.
+stages:
+  - test
+  - build
+  - publish
+  - deploy
+
+# Define a global variable block.
+# These variables will be available to all jobs in the pipeline.
+variables:
+  DOCKER_IMAGE_NAME: weather-app
+  DOCKER_REPO: noufeldocker77417
+  GCP_VM_IP: 34.67.209.88
+
+# ---
+# Stage 1: Unit Test Job
+# ---
+# This job is responsible for running the Go unit tests.
+test:
+  # The stage this job belongs to.
+  stage: test
+  # Specify a Docker image to use as the build environment.
+  # The `golang:1.22.4-slim` image is perfect for Go projects.
+  image: golang:1.22.4-slim
+  # This command is executed before the main script.
+  # It is used to fetch Go modules.
+  before_script:
+    - go mod download
+  # The main script commands to be executed in this job.
+  script:
+    - go test -v ./...
+
+# ---
+# Stage 2: Docker Build Job
+# ---
+# This job builds a multi-platform Docker image.
+build:
+  # The stage this job belongs to.
+  stage: build
+  # We use the official Docker image to access Docker commands.
+  image: docker:20.10.16
+  # Ensure the Docker daemon is ready for use.
+  services:
+    - docker:20.10.16-dind
+  # The `needs` keyword in GitLab CI/CD ensures this job runs only after the `test` job is successful.
+  # This is the equivalent of `needs: test` in GitHub Actions.
+  needs: ["test"]
+  script:
+    - docker info
+    - docker buildx create --use --name mybuilder
+    # Build the image and tag it with the commit SHA and also `latest` tag.
+    - docker buildx build --platform linux/amd64,linux/arm64 --tag $DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA --tag $DOCKER_IMAGE_NAME:latest .
+  # This section caches the image to be used by the `publish` job.
+  # The `paths` keyword specifies which artifacts to cache.
+  cache:
+    key: "$CI_COMMIT_SHORT_SHA"
+    paths:
+      - ./
+    policy: push
+  # `artifacts` in GitLab CI are similar to `upload-artifact` in GitHub Actions.
+  # We export the built image as an artifact for the next stage.
+  artifacts:
+    name: "docker-image"
+    paths:
+      - /tmp/weather-app.tar
+    expire_in: 1 day
+    when: on_success
+  # We save the image as a tarball to be uploaded as an artifact.
+  after_script:
+    - docker save -o /tmp/weather-app.tar $DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+
+# ---
+# Stage 3: Publish Job
+# ---
+# This job pushes the built Docker image to Docker Hub.
+publish:
+  # The stage this job belongs to.
+  stage: publish
+  # The same Docker image is used here.
+  image: docker:20.10.16
+  services:
+    - docker:20.10.16-dind
+  # This job depends on the `build` job.
+  needs: ["build"]
+  # Here we define the secret variables.
+  # GitLab CI/CD automatically injects these into the pipeline from the project settings.
+  # The `DOCKER_USERNAME` and `DOCKER_TOKEN` must be set in your GitLab project's CI/CD settings.
+  variables:
+    DOCKER_USERNAME: $DOCKER_USERNAME
+    DOCKER_TOKEN: $DOCKER_TOKEN
+  script:
+    # `CI_REGISTRY_USER` and `CI_REGISTRY_PASSWORD` are built-in GitLab CI/CD variables.
+    - echo "$DOCKER_TOKEN" | docker login --username "$DOCKER_USERNAME" --password-stdin
+    # `CI_COMMIT_SHORT_SHA` is a built-in variable containing the short commit SHA.
+    - docker tag $DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA $DOCKER_REPO/$DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    - docker tag $DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA $DOCKER_REPO/$DOCKER_IMAGE_NAME:latest
+    - docker push $DOCKER_REPO/$DOCKER_IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+    - docker push $DOCKER_REPO/$DOCKER_IMAGE_NAME:latest
+  # We use `dependencies` to download the artifacts from the previous `build` job.
+  dependencies:
+    - build
+
+# ---
+# Stage 4: Deploy Job
+# ---
+# This job deploys the new image to a Google Cloud Platform VM.
+deploy:
+  # The stage this job belongs to.
+  stage: deploy
+  # We use a base image with `curl` for SSH actions.
+  image: alpine/curl
+  # This job runs after `publish` succeeds.
+  needs: ["publish"]
+  script:
+    # Use `sshpass` and `ssh` to connect to the GCP VM and run Docker commands.
+    # The `SSH_PRIVATE_KEY` secret must be configured in GitLab.
+    - apk add --no-cache sshpass
+    - sshpass -p "$SSH_PRIVATE_KEY" ssh -o StrictHostKeyChecking=no ubuntu@$GCP_VM_IP "docker pull $DOCKER_REPO/$DOCKER_IMAGE_NAME:latest && docker stop $DOCKER_IMAGE_NAME || true && docker rm $DOCKER_IMAGE_NAME || true && docker run -d --name $DOCKER_IMAGE_NAME -p 8080:8080 $DOCKER_REPO/$DOCKER_IMAGE_NAME:latest"
