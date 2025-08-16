@@ -1,44 +1,31 @@
-# Stage 1: The builder stage
-# We use a specific version of the Go image to ensure a consistent build environment.
+# Use the official Go image to build the application
 FROM golang:1.22.4-alpine AS builder
 
-# Set the current working directory inside the container.
-# This is where all the subsequent commands will be executed.
+# Set the working directory
 WORKDIR /app
 
-# Copy the Go module files to the working directory.
-# This allows Docker to cache the module download step,
-# which speeds up subsequent builds if the dependencies haven't changed.
-COPY go.mod go.sum ./
-
-# Download all the required Go modules.
-# We use `go mod download` to fetch the dependencies defined in go.mod.
-RUN go mod download
-
-# Copy the rest of the application source code into the container.
+# Copy the source code
 COPY . .
 
-# Build the Go application binary.
-# The `-o` flag specifies the output file name, `weather`.
-# The `-ldflags -s -w` flags reduce the size of the final binary by removing
-# the debug information.
-# The `./cmd/cli` is the entrypoint to the application.
-# Update the path to your main package if it is different.
-RUN go build -o weather .
+# Build the Go application
+RUN go mod tidy
+RUN CGO_ENABLED=0 go build -o /weather-app .
 
-# Stage 2: The final, minimal image
-# We use a lightweight base image to reduce the final image size.
-# Alpine Linux is a popular choice for this.
-FROM alpine:latest as Runner
+# Use a minimal image for the final container
+FROM alpine:3.18
 
-# Set the current working directory to the root for simplicity.
+# Set the working directory
 WORKDIR /
 
-# Copy the built binary from the builder stage to the final image.
-# We also copy the certificates to ensure HTTPS connections work.
-COPY --from=builder /app/weather /usr/local/bin/weather
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Copy the binary from the builder stage
+COPY --from=builder /weather-app /weather-app
 
-# Define the command to run when the container starts.
-# This executes the compiled Go binary.
-ENTRYPOINT ["weather"]
+#export api key (no need for secrecy)
+ENV WEATHER_API_KEY="94474d04349f43008d395834240102"
+
+# Expose the port the web server will listen on
+EXPOSE 8080
+
+# The command to run the application
+# It will keep running as a web server
+CMD ["/weather-app"]

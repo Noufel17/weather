@@ -19,6 +19,9 @@ env:
   DOCKER_IMAGE_NAME: weather-app
   DOCKER_REPO: noufeldocker77417
   GCP_VM_IP: 34.67.209.88
+  # The WEATHER_API_KEY variable is now used for the Go application.
+  # Add this as a secret in your repository.
+  WEATHER_API_KEY: ${{ secrets.WEATHER_API_KEY }}
 
 jobs:
   test:
@@ -110,10 +113,13 @@ jobs:
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ env.GCP_VM_IP }}
-          username: ubuntu
+          username: ubuntu # Replace with your SSH username
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             sudo docker pull ${{ env.DOCKER_REPO }}/${{ env.DOCKER_IMAGE_NAME }}:latest
             sudo docker stop ${{ env.DOCKER_IMAGE_NAME }} || true
             sudo docker rm ${{ env.DOCKER_IMAGE_NAME }} || true
-            sudo docker run -d --name ${{ env.DOCKER_IMAGE_NAME }} ${{ env.DOCKER_REPO }}/${{ env.DOCKER_IMAGE_NAME }}:latest
+            sudo docker run -d --name ${{ env.DOCKER_IMAGE_NAME }} \
+              -p 80:8080 \
+              --env WEATHER_API_KEY=${{ secrets.WEATHER_API_KEY }} \
+              ${{ env.DOCKER_REPO }}/${{ env.DOCKER_IMAGE_NAME }}:latest

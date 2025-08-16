@@ -1,14 +1,12 @@
-// main_test.go - Unit tests for the weather app
+// main_test.go - Unit tests for the weather web server
 package main
 
 import (
-	"bytes"
 	"io"
 	"net/http"
-	"os"
+	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // mockRoundTripper allows us to mock the HTTP client's behavior
@@ -138,163 +136,115 @@ func TestFormatCurrentWeather(t *testing.T) {
 	}
 }
 
-// TestFormatHourlyForecast tests the formatting of the hourly forecast
-func TestFormatHourlyForecast(t *testing.T) {
-	now := time.Now()
-	weather := &Weather{
-		Forecast: struct {
-			Forecastday []struct {
-				Hour []struct {
-					TimeEpoch    int64   `json:"time_epoch"`
-					TempC        float64 `json:"temp_c"`
-					Condition    struct {
-						Text string `json:"text"`
-						Icon string `json:"icon"`
-					} `json:"condition"`
-					ChanceOfRain float64 `json:"chance_of_rain"`
-				} `json:"hour"`
-			} `json:"forecastday"`
-		}{
-			Forecastday: []struct {
-				Hour []struct {
-					TimeEpoch    int64   `json:"time_epoch"`
-					TempC        float64 `json:"temp_c"`
-					Condition    struct {
-						Text string `json:"text"`
-						Icon string `json:"icon"`
-					} `json:"condition"`
-					ChanceOfRain float64 `json:"chance_of_rain"`
-				} `json:"hour"`
-			}{
-				{
-					Hour: []struct {
-						TimeEpoch    int64   `json:"time_epoch"`
-						TempC        float64 `json:"temp_c"`
-						Condition    struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						} `json:"condition"`
-						ChanceOfRain float64 `json:"chance_of_rain"`
-					}{
-						{TimeEpoch: now.Add(-1 * time.Hour).Unix(), TempC: 15.0, Condition: struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						}{Text: "Cloudy"}, ChanceOfRain: 10},
-						{TimeEpoch: now.Add(1 * time.Hour).Unix(), TempC: 18.0, Condition: struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						}{Text: "Sunny"}, ChanceOfRain: 5},
-					},
+// TestWeatherHandler tests the main HTTP handler
+func TestWeatherHandler(t *testing.T) {
+	t.Run("Successful request with city", func(t *testing.T) {
+		// Mock the API response for this specific test case
+		mockClient := &http.Client{
+			Transport: &mockRoundTripper{
+				Response: &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"location": {"name": "TestCity", "country": "TestCountry"}, "current": {"temp_c": 25.0, "condition": {"text": "Sunny"}}}`)),
 				},
 			},
-		},
-	}
+		}
 
-	result := FormatHourlyForecast(weather)
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 forecasts, got %d", len(result))
-	}
+		// Create a new App instance and inject the mock weather service
+		app := &App{weatherService: NewWeatherService("test-key", mockClient)}
+		req := httptest.NewRequest("GET", "/weather?city=TestCity", nil)
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(app.weatherHandler)
+		handler.ServeHTTP(rr, req)
 
-	expectedPrefix := now.Add(1 * time.Hour).Local().Format("15:04")
-	if !strings.HasPrefix(result[1], expectedPrefix) {
-		t.Errorf("Expected forecast to start with %q, but got %q", expectedPrefix, result[1])
-	}
-}
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+		expected := `{"weather":"TestCity, TestCountry: 25.0°C, Sunny"}` + "\n"
+		if rr.Body.String() != expected {
+			t.Errorf("handler returned unexpected body: got %q want %q", rr.Body.String(), expected)
+		}
+	})
 
-// TestGetCityFromArgs tests argument parsing
-func TestGetCityFromArgs(t *testing.T) {
-	testCases := []struct {
-		name     string
-		args     []string
-		expected string
-	}{
-		{"With city", []string{"cmd", "London"}, "London"},
-		{"Without city", []string{"cmd"}, "Algiers"},
-		{"Empty args", []string{}, "Algiers"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := GetCityFromArgs(tc.args)
-			if result != tc.expected {
-				t.Errorf("Expected %q, but got %q", tc.expected, result)
-			}
-		})
-	}
-}
-
-// TestPrintForecast captures stdout to test the output
-func TestPrintForecast(t *testing.T) {
-	// Capture stdout
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	forecasts := []string{
-		"10:00 - 15.0°C, 10% - Sunny",
-		"11:00 - 16.0°C, 60% - Rainy",
-	}
-
-	weather := &Weather{
-		Forecast: struct {
-			Forecastday []struct {
-				Hour []struct {
-					TimeEpoch    int64   `json:"time_epoch"`
-					TempC        float64 `json:"temp_c"`
-					Condition    struct {
-						Text string `json:"text"`
-						Icon string `json:"icon"`
-					} `json:"condition"`
-					ChanceOfRain float64 `json:"chance_of_rain"`
-				} `json:"hour"`
-			} `json:"forecastday"`
-		}{
-			Forecastday: []struct {
-				Hour []struct {
-					TimeEpoch    int64   `json:"time_epoch"`
-					TempC        float64 `json:"temp_c"`
-					Condition    struct {
-						Text string `json:"text"`
-						Icon string `json:"icon"`
-					} `json:"condition"`
-					ChanceOfRain float64 `json:"chance_of_rain"`
-				} `json:"hour"`
-			}{
-				{
-					Hour: []struct {
-						TimeEpoch    int64   `json:"time_epoch"`
-						TempC        float64 `json:"temp_c"`
-						Condition    struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						} `json:"condition"`
-						ChanceOfRain float64 `json:"chance_of_rain"`
-					}{
-						{TimeEpoch: time.Now().Add(1 * time.Hour).Unix(), TempC: 15.0, Condition: struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						}{Text: "Sunny"}, ChanceOfRain: 10},
-						{TimeEpoch: time.Now().Add(2 * time.Hour).Unix(), TempC: 16.0, Condition: struct {
-							Text string `json:"text"`
-							Icon string `json:"icon"`
-						}{Text: "Rainy"}, ChanceOfRain: 60},
-					},
+	t.Run("Request without city", func(t *testing.T) {
+		// Mock the API response for this specific test case
+		mockClient := &http.Client{
+			Transport: &mockRoundTripper{
+				Response: &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(`{"location": {"name": "Algiers", "country": "Algeria"}, "current": {"temp_c": 20.0, "condition": {"text": "Cloudy"}}}`)),
 				},
 			},
-		},
-	}
-	PrintForecast(forecasts, weather)
-	w.Close()
-	os.Stdout = oldStdout
+		}
 
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	output := buf.String()
+		app := &App{weatherService: NewWeatherService("test-key", mockClient)}
+		req := httptest.NewRequest("GET", "/weather", nil)
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(app.weatherHandler)
+		handler.ServeHTTP(rr, req)
 
-	// Since coloring and emojis are completely removed, we only check for the plain strings.
-	// The PrintForecast function skips the first hour if it's in the past.
-	expectedOutput := "10:00 - 15.0°C, 10% - Sunny\n11:00 - 16.0°C, 60% - Rainy\n"
-	if output != expectedOutput {
-		t.Errorf("Expected output to be %q, but got %q", expectedOutput, output)
-	}
+		if status := rr.Code; status != http.StatusOK {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+		}
+		expected := `{"weather":"Algiers, Algeria: 20.0°C, Cloudy"}` + "\n"
+		if rr.Body.String() != expected {
+			t.Errorf("handler returned unexpected body: got %q want %q", rr.Body.String(), expected)
+		}
+	})
+
+	t.Run("API error response", func(t *testing.T) {
+		// Mock the API response to be a 401 error
+		mockClient := &http.Client{
+			Transport: &mockRoundTripper{
+				Response: &http.Response{
+					StatusCode: 401,
+					Body:       io.NopCloser(strings.NewReader("Unauthorized")),
+				},
+			},
+		}
+
+		app := &App{weatherService: NewWeatherService("test-key", mockClient)}
+		req := httptest.NewRequest("GET", "/weather?city=TestCity", nil)
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(app.weatherHandler)
+		handler.ServeHTTP(rr, req)
+
+		if status := rr.Code; status != http.StatusInternalServerError {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusInternalServerError)
+		}
+		expected := "Error fetching weather: API returned status 401 for city TestCity\n"
+		if rr.Body.String() != expected {
+			t.Errorf("handler returned unexpected body: got %q want %q", rr.Body.String(), expected)
+		}
+	})
+
+	t.Run("API key not set", func(t *testing.T) {
+		// Mock the API response to be a 400 error because the key is missing
+		mockClient := &http.Client{
+			Transport: &mockRoundTripper{
+				Response: &http.Response{
+					StatusCode: 400,
+					Body:       io.NopCloser(strings.NewReader("Bad Request")),
+				},
+			},
+		}
+
+		app := &App{
+			weatherService: NewWeatherService("", mockClient),
+		}
+
+		req := httptest.NewRequest("GET", "/weather", nil)
+		rr := httptest.NewRecorder()
+		handler := http.HandlerFunc(app.weatherHandler)
+
+		handler.ServeHTTP(rr, req)
+
+		if status := rr.Code; status != http.StatusInternalServerError {
+			t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusInternalServerError)
+		}
+
+		expected := "Error fetching weather: API returned status 400 for city Algiers\n"
+		if rr.Body.String() != expected {
+			t.Errorf("handler returned unexpected body: got %q want %q", rr.Body.String(), expected)
+		}
+	})
 }

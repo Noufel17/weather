@@ -1,15 +1,21 @@
-// main.go - Refactored for testability
 package main
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
 )
 
+// App struct holds the dependencies for the application
+type App struct {
+	weatherService *WeatherService
+}
+
+// Weather represents the JSON structure from the API
 type Weather struct {
 	Location struct {
 		Name    string `json:"name"`
@@ -37,6 +43,7 @@ type Weather struct {
 	} `json:"forecast"`
 }
 
+// WeatherService struct holds the API key and HTTP client
 type WeatherService struct {
 	APIKey string
 	Client *http.Client
@@ -77,7 +84,7 @@ func (ws *WeatherService) FetchWeatherData(city string) (*Weather, error) {
 	return &weather, nil
 }
 
-// FormatCurrentWeather formats the current weather for printing
+// FormatCurrentWeather formats the current weather data as a string
 func FormatCurrentWeather(weather *Weather) string {
 	location := fmt.Sprintf("%s, %s", weather.Location.Name, weather.Location.Country)
 	temp := fmt.Sprintf("%.1f°C", weather.Current.TempC)
@@ -85,84 +92,48 @@ func FormatCurrentWeather(weather *Weather) string {
 	return fmt.Sprintf("%s: %s, %s", location, temp, condition)
 }
 
-// FormatHourlyForecast formats the hourly forecast data
-func FormatHourlyForecast(weather *Weather) []string {
-	var forecasts []string
-
-	if len(weather.Forecast.Forecastday) == 0 {
-		return forecasts
+// weatherHandler handles HTTP requests for weather data and is a method of App
+func (a *App) weatherHandler(w http.ResponseWriter, r *http.Request) {
+	// Get the city from the URL query parameters
+	city := r.URL.Query().Get("city")
+	if city == "" {
+		city = "Algiers" // default city if none is provided
 	}
 
-	hours := weather.Forecast.Forecastday[0].Hour
-	for _, hour := range hours {
-		date := time.Unix(hour.TimeEpoch, 0)
-		temp := fmt.Sprintf("%.1f°C", hour.TempC)
-		condition := hour.Condition.Text
-		rainChance := fmt.Sprintf("%.0f%%", hour.ChanceOfRain)
-
-		forecast := fmt.Sprintf("%s - %s, %s - %s",
-			date.Local().Format("15:04"),
-			temp,
-			rainChance,
-			condition,
-		)
-
-		forecasts = append(forecasts, forecast)
-	}
-
-	return forecasts
-}
-
-// PrintForecast prints the forecast
-func PrintForecast(forecasts []string, weather *Weather) {
-	if len(weather.Forecast.Forecastday) == 0 {
+	// Use the pre-initialized weather service
+	weather, err := a.weatherService.FetchWeatherData(city)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error fetching weather: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	hours := weather.Forecast.Forecastday[0].Hour
-	currentTime := time.Now()
-	hourIndex := 0
-
-	for _, hour := range hours {
-		date := time.Unix(hour.TimeEpoch, 0)
-		if date.Before(currentTime) {
-			continue
-		}
-
-		if hourIndex < len(forecasts) {
-			fmt.Println(forecasts[hourIndex])
-			hourIndex++
-		}
-	}
+	// Return the formatted string as a JSON response
+	formattedWeather := FormatCurrentWeather(weather)
+	response := map[string]string{"weather": formattedWeather}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
-// GetCityFromArgs extracts city name from command line arguments
-func GetCityFromArgs(args []string) string {
-	if len(args) >= 2 {
-		return args[1]
-	}
-	return "Algiers" // default city
-}
-
+// main function to start the server
 func main() {
-	city := GetCityFromArgs(os.Args)
-
-	// Use environment variable for API key, fallback to hardcoded for demo
+	// Get API key from environment variable
 	apiKey := os.Getenv("WEATHER_API_KEY")
 	if apiKey == "" {
-		apiKey = "YOUR_API_KEY_HERE"
+		log.Fatalf("API key not found. Please set the WEATHER_API_KEY environment variable.")
 	}
 
-	weatherService := NewWeatherService(apiKey, &http.Client{Timeout: 10 * time.Second})
-
-	weather, err := weatherService.FetchWeatherData(city)
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		os.Exit(1)
+	// Create a new App instance with a real HTTP client
+	app := &App{
+		weatherService: NewWeatherService(apiKey, &http.Client{Timeout: 10 * time.Second}),
 	}
 
-	fmt.Println(FormatCurrentWeather(weather))
+	// Register the handler for the /weather endpoint
+	http.HandleFunc("/weather", app.weatherHandler)
 
-	forecasts := FormatHourlyForecast(weather)
-	PrintForecast(forecasts, weather)
+	// Start the server on port 8080
+	port := "8080"
+	log.Printf("Starting server on port %s...", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("Failed to start server: %v", err)
+	}
 }
