@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -117,7 +116,7 @@ func (a *App) weatherHandler(w http.ResponseWriter, r *http.Request) {
 // main function to start the server
 func main() {
 	// Get API key from environment variable
-	apiKey := os.Getenv("WEATHER_API_KEY")
+	apiKey := "94474d04349f43008d395834240102"
 	if apiKey == "" {
 		log.Fatalf("API key not found. Please set the WEATHER_API_KEY environment variable.")
 	}

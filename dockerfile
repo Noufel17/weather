@@ -20,9 +20,6 @@ WORKDIR /
 # Copy the binary from the builder stage
 COPY --from=builder /weather-app /weather-app
 
-#export api key (no need for secrecy)
-ENV WEATHER_API_KEY="94474d04349f43008d395834240102"
-
 # Expose the port the web server will listen on
 EXPOSE 8080
 
