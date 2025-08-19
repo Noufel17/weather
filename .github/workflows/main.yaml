@@ -26,7 +26,7 @@ env:
 jobs:
   test:
     name: Run Unit Tests
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
 
   build:
     name: Build Docker Image
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: test # This job will only run if the 'test' job succeeds.
     outputs:
       image_tag: ${{ github.sha }}
@@ -72,7 +72,7 @@ jobs:
 
   publish:
     name: Publish Docker Image
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: build # This job will only run if the 'build' job succeeds.
     steps:
       - name: Download Docker image artifact
@@ -102,7 +102,7 @@ jobs:
 
   deploy:
     name: Deploy to GCP VM
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: publish # This job will now only run after the 'publish' job succeeds.
     steps:
       - name: Checkout repository
